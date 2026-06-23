@@ -1,0 +1,552 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Камень-Ножницы-Бумага</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.1/dist/ort.min.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: { sans: ['Space Grotesk', 'sans-serif'] },
+                    colors: {
+                        bg: '#0a0b0e',
+                        surface: '#12141a',
+                        border: '#23272f',
+                        accent: '#c9d14a',
+                        'accent-dim': '#8a9434',
+                        muted: '#5c6170',
+                        danger: '#e85d75',
+                        info: '#4ea8de',
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body { font-family: 'Space Grotesk', sans-serif; background: #0a0b0e; }
+
+        /* Фон с мягкими свечениями */
+        .bg-glow {
+            background:
+                radial-gradient(ellipse at 25% 40%, rgba(201,209,74,0.05) 0%, transparent 55%),
+                radial-gradient(ellipse at 75% 25%, rgba(78,168,222,0.04) 0%, transparent 50%),
+                radial-gradient(ellipse at 55% 85%, rgba(232,93,117,0.03) 0%, transparent 50%),
+                #0a0b0e;
+        }
+
+        /* Анимация отсчёта */
+        @keyframes countPop {
+            0%   { transform: translate(-50%,-50%) scale(0.3); opacity: 0; }
+            25%  { transform: translate(-50%,-50%) scale(1.15); opacity: 1; }
+            65%  { transform: translate(-50%,-50%) scale(1); opacity: 1; }
+            100% { transform: translate(-50%,-50%) scale(1.6); opacity: 0; }
+        }
+        .count-pop { animation: countPop 0.85s ease-out forwards; }
+
+        /* Появление карточки */
+        @keyframes cardIn {
+            from { transform: translateY(24px) scale(0.9); opacity: 0; }
+            to   { transform: translateY(0) scale(1); opacity: 1; }
+        }
+        .card-in { animation: cardIn 0.4s ease-out forwards; }
+
+        /* Пульсация VS */
+        @keyframes vsBeat {
+            0%,100% { transform: scale(1); opacity: 0.5; }
+            50%     { transform: scale(1.12); opacity: 0.8; }
+        }
+        .vs-beat { animation: vsBeat 1.4s ease-in-out infinite; }
+
+        /* Пульсация точки записи */
+        @keyframes recBlink {
+            0%,100% { opacity: 1; }
+            50%     { opacity: 0.25; }
+        }
+        .rec-blink { animation: recBlink 1.4s ease-in-out infinite; }
+
+        /* Кнопка */
+        .btn-main {
+            transition: transform 0.15s, box-shadow 0.15s, background 0.15s;
+        }
+        .btn-main:hover:not(:disabled) {
+            transform: translateY(-1px);
+            box-shadow: 0 6px 20px rgba(201,209,74,0.25);
+        }
+        .btn-main:active:not(:disabled) { transform: translateY(0); }
+
+        /* Зеркало для видео/canvas */
+        .mirror { transform: scaleX(-1); }
+
+        /* Свечение результата */
+        .glow-win  { text-shadow: 0 0 30px rgba(201,209,74,0.5); }
+        .glow-lose { text-shadow: 0 0 30px rgba(232,93,117,0.5); }
+        .glow-draw { text-shadow: 0 0 30px rgba(78,168,222,0.5); }
+
+        /* Жест-эмодзи */
+        .gesture-big { font-size: 3.5rem; line-height: 1; }
+
+        /* Reduced motion */
+        @media (prefers-reduced-motion: reduce) {
+            .count-pop, .card-in, .vs-beat, .rec-blink { animation: none !important; }
+        }
+    </style>
+</head>
+
+<body class="bg-glow min-h-screen text-gray-200 flex flex-col items-center justify-center px-4 py-8">
+
+    <!-- Заголовок -->
+    <header class="mb-5 text-center">
+        <h1 class="text-xl sm:text-2xl font-bold tracking-tight text-gray-100">
+            Камень — Ножницы — Бумага
+        </h1>
+        <p class="text-xs text-muted mt-1 tracking-wide">Покажи жест камере</p>
+    </header>
+
+    <!-- Область камеры -->
+    <div id="camWrap" class="relative w-full max-w-[600px] aspect-[4/3] bg-surface border border-border rounded-xl overflow-hidden mb-5 shadow-lg shadow-black/40">
+        <video id="video" class="absolute inset-0 w-full h-full object-cover mirror" autoplay playsinline muted></video>
+        <canvas id="canvas" class="absolute inset-0 w-full h-full mirror"></canvas>
+
+        <!-- Placeholder -->
+        <div id="placeholder" class="absolute inset-0 flex flex-col items-center justify-center bg-surface z-10">
+            <svg class="w-14 h-14 text-muted/60 mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+                <path stroke-linecap="round" stroke-linejoin="round"
+                      d="M15.75 10.5l4.72-4.72a.75.75 0 011.28.53v11.38a.75.75 0 01-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 002.25-2.25v-9a2.25 2.25 0 00-2.25-2.25h-9A2.25 2.25 0 002.25 7.5v9a2.25 2.25 0 002.25 2.25z"/>
+            </svg>
+            <p class="text-muted text-sm">Камера не подключена</p>
+        </div>
+
+        <!-- Индикатор LIVE -->
+        <div id="recDot" class="absolute top-3 left-3 hidden items-center gap-1.5 bg-black/50 backdrop-blur rounded-full px-2.5 py-1 z-20">
+            <span class="w-2 h-2 rounded-full bg-red-500 rec-blink inline-block"></span>
+            <span class="text-[11px] text-white/90 font-medium">LIVE</span>
+        </div>
+
+        <!-- Текущий жест (предпросмотр) -->
+        <div id="liveTag" class="absolute bottom-3 left-3 hidden bg-black/55 backdrop-blur rounded-lg px-3 py-1.5 z-20">
+            <span id="liveTagText" class="text-sm font-semibold"></span>
+        </div>
+
+        <!-- Оверлей отсчёта -->
+        <div id="countOverlay" class="absolute inset-0 flex items-center justify-center pointer-events-none z-30 hidden">
+            <span id="countNum" class="absolute left-1/2 top-1/2 text-[7rem] font-black text-white drop-shadow-[0_0_40px_rgba(201,209,74,0.55)]"></span>
+        </div>
+    </div>
+
+    <!-- Кнопки -->
+    <div class="flex flex-col items-center gap-2.5 mb-4">
+        <button id="btnCamera" disabled
+                class="btn-main bg-accent text-bg font-semibold px-7 py-2.5 rounded-lg text-sm disabled:bg-gray-700 disabled:text-gray-500 disabled:cursor-not-allowed">
+            Загрузка модели...
+        </button>
+        <button id="btnPlay" class="btn-main bg-accent text-bg font-semibold px-7 py-2.5 rounded-lg text-sm hidden">
+            Начать игру
+        </button>
+        <button id="btnRestart" class="btn-main bg-accent text-bg font-semibold px-7 py-2.5 rounded-lg text-sm hidden">
+            Начать заново
+        </button>
+    </div>
+
+    <!-- Статус -->
+    <p id="status" class="text-xs text-muted text-center min-h-[1.2em] mb-5"></p>
+
+    <!-- Панель результата -->
+    <section id="resultBox" class="w-full max-w-[600px] hidden">
+        <div class="bg-surface border border-border rounded-xl p-6 shadow-lg shadow-black/30">
+            <div class="flex items-center justify-center gap-8 sm:gap-14">
+                <!-- Игрок -->
+                <div id="pCard" class="flex flex-col items-center gap-1.5 opacity-0">
+                    <span class="text-[10px] text-muted uppercase tracking-widest font-medium">Ты</span>
+                    <span id="pEmoji" class="gesture-big"></span>
+                    <span id="pLabel" class="text-sm font-semibold"></span>
+                </div>
+                <!-- VS -->
+                <span class="text-xl font-bold text-muted/40 vs-beat select-none">VS</span>
+                <!-- Компьютер -->
+                <div id="cCard" class="flex flex-col items-center gap-1.5 opacity-0">
+                    <span class="text-[10px] text-muted uppercase tracking-widest font-medium">Компьютер</span>
+                    <span id="cEmoji" class="gesture-big"></span>
+                    <span id="cLabel" class="text-sm font-semibold"></span>
+                </div>
+            </div>
+            <div id="verdict" class="text-center mt-5 text-2xl font-bold opacity-0"></div>
+        </div>
+    </section>
+
+<script>
+/* ==================================================================
+   КОНФИГУРАЦИЯ
+   ================================================================== */
+const MODEL_PATH   = 'best.onnx';     // относительный путь — файл рядом с HTML
+const MODEL_SIZE   = 640;
+const CONF_THRESH  = 0.35;
+const CAP_FRAMES   = 5;               // кадров для анализа
+const CAP_INTERVAL = 80;              // мс между кадрами захвата
+const PREV_INTERVAL= 420;             // мс между инференсами предпросмотра
+
+// Порядок классов модели (0=Paper,1=Rock,2=Scissors) — НЕ менять
+const CLS_NAME  = ['Бумага','Камень','Ножницы'];
+const CLS_EMOJI = ['🖐️','✊','✌️'];
+const CLS_COLOR = ['#4ea8de','#c9d14a','#e85d75'];
+
+/* ==================================================================
+   DOM
+   ================================================================== */
+const video        = document.getElementById('video');
+const canvas       = document.getElementById('canvas');
+const ctx          = canvas.getContext('2d');
+const btnCamera    = document.getElementById('btnCamera');
+const btnPlay      = document.getElementById('btnPlay');
+const btnRestart   = document.getElementById('btnRestart');
+const statusEl     = document.getElementById('status');
+const placeholder  = document.getElementById('placeholder');
+const recDot       = document.getElementById('recDot');
+const liveTag      = document.getElementById('liveTag');
+const liveTagText  = document.getElementById('liveTagText');
+const countOverlay = document.getElementById('countOverlay');
+const countNum     = document.getElementById('countNum');
+const resultBox    = document.getElementById('resultBox');
+const pCard        = document.getElementById('pCard');
+const cCard        = document.getElementById('cCard');
+const pEmoji       = document.getElementById('pEmoji');
+const cEmoji       = document.getElementById('cEmoji');
+const pLabel       = document.getElementById('pLabel');
+const cLabel       = document.getElementById('cLabel');
+const verdict      = document.getElementById('verdict');
+
+/* ==================================================================
+   СОСТОЯНИЕ
+   ================================================================== */
+let session       = null;
+let state         = 'LOADING'; // LOADING | READY | CAMERA | COUNTDOWN | CAPTURING | RESULT
+let bestDet       = null;      // лучший детект для отрисовки
+let detDirty      = false;
+let prevTimer     = null;
+let renderRunning = false;
+
+/* ==================================================================
+   АУДИО (Web Audio API, без внешних файлов)
+   ================================================================== */
+let audioCtx;
+function aud() {
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+    return audioCtx;
+}
+function beep(freq, ms, type='sine', vol=0.12) {
+    try {
+        const a = aud(), o = a.createOscillator(), g = a.createGain();
+        o.connect(g); g.connect(a.destination);
+        o.frequency.value = freq; o.type = type;
+        g.gain.setValueAtTime(vol, a.currentTime);
+        g.gain.exponentialRampToValueAtTime(0.001, a.currentTime + ms/1000);
+        o.start(a.currentTime); o.stop(a.currentTime + ms/1000);
+    } catch(_){}
+}
+
+/* ==================================================================
+   ПРЕПРОЦЕССИНГ (переиспользуемые буферы, умножение вместо деления)
+   ================================================================== */
+const pCvs = document.createElement('canvas');
+pCvs.width = pCvs.height = MODEL_SIZE;
+const pCtx = pCvs.getContext('2d', { willReadFrequently: true });
+
+const buf = new Float32Array(MODEL_SIZE * MODEL_SIZE * 3);
+const K   = 0.003921568627451; // 1/255
+
+function preprocess() {
+    pCtx.drawImage(video, 0, 0, MODEL_SIZE, MODEL_SIZE);
+    const px = pCtx.getImageData(0, 0, MODEL_SIZE, MODEL_SIZE).data;
+    const S  = MODEL_SIZE * MODEL_SIZE;
+    for (let i = 0; i < S; i++) {
+        const p = i << 2;
+        buf[i]        = px[p]     * K;
+        buf[i + S]    = px[p + 1] * K;
+        buf[i + S*2]  = px[p + 2] * K;
+    }
+    return new ort.Tensor('float32', buf, [1, 3, MODEL_SIZE, MODEL_SIZE]);
+}
+
+/* ==================================================================
+   ПОСТПРОЦЕССИНГ — берём только ЛУЧШИЙ бокс (не все 300)
+   ================================================================== */
+function bestDetection(out) {
+    const d = out.data, n = out.dims[1];
+    let best = null;
+    for (let i = 0; i < n; i++) {
+        const o = i * 6, c = d[o+4];
+        if (c < CONF_THRESH) continue;
+        if (!best || c > best.conf) {
+            best = { x1:d[o], y1:d[o+1], x2:d[o+2], y2:d[o+3],
+                     conf:c, cid: Math.round(d[o+5]) };
+        }
+    }
+    return best;
+}
+
+/* ==================================================================
+   ИНФЕРЕНС
+   ================================================================== */
+async function infer() {
+    if (!session || !video.videoWidth) return null;
+    try {
+        const t = preprocess();
+        const r = await session.run({ images: t });
+        return bestDetection(r['output0']);
+    } catch(e) { console.error('infer:', e); return null; }
+}
+
+/* ==================================================================
+   ОТРИСОВКА (только когда dirty)
+   ================================================================== */
+function drawDet(d) {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    if (!d) return;
+    const sx = canvas.width  / MODEL_SIZE;
+    const sy = canvas.height / MODEL_SIZE;
+    const x = d.x1*sx, y = d.y1*sy, w = (d.x2-d.x1)*sx, h = (d.y2-d.y1)*sy;
+    const col = CLS_COLOR[d.cid] || '#c9d14a';
+
+    ctx.strokeStyle = col; ctx.lineWidth = 2.5;
+    ctx.strokeRect(x, y, w, h);
+
+    const txt = `${CLS_NAME[d.cid]} ${Math.round(d.conf*100)}%`;
+    ctx.save();
+    ctx.scale(-1, 1);
+    ctx.font = 'bold 13px "Space Grotesk",sans-serif';
+    const tw = ctx.measureText(txt).width;
+    const tx = -(x + w);
+    ctx.fillStyle = col;
+    ctx.fillRect(tx - 4, y - 20, tw + 8, 20);
+    ctx.fillStyle = '#0a0b0e';
+    ctx.fillText(txt, tx, y - 5);
+    ctx.restore();
+}
+
+function renderTick() {
+    if (detDirty) { drawDet(bestDet); detDirty = false; }
+    if (renderRunning) requestAnimationFrame(renderTick);
+}
+function startRender() {
+    if (!renderRunning) { renderRunning = true; renderTick(); }
+}
+
+/* ==================================================================
+   ПРЕДПРОСМОТР (редкий инференс — обратная связь для пользователя)
+   ================================================================== */
+async function prevTick() {
+    if (state !== 'CAMERA') return;
+    const d = await infer();
+    if (state !== 'CAMERA') return; // могли уже уйти
+    bestDet = d; detDirty = true;
+    if (d) {
+        liveTag.classList.remove('hidden'); liveTag.classList.add('flex');
+        liveTagText.textContent = `${CLS_EMOJI[d.cid]} ${CLS_NAME[d.cid]} ${Math.round(d.conf*100)}%`;
+        liveTagText.style.color = CLS_COLOR[d.cid];
+    } else {
+        liveTag.classList.add('hidden'); liveTag.classList.remove('flex');
+    }
+}
+function startPrev() { stopPrev(); prevTick(); prevTimer = setInterval(prevTick, PREV_INTERVAL); }
+function stopPrev()  { if (prevTimer) { clearInterval(prevTimer); prevTimer = null; } }
+
+/* ==================================================================
+   ЗАГРУЗКА МОДЕЛИ (WebGL → WASM фоллбэк, + warm-up)
+   ================================================================== */
+async function loadModel() {
+    statusEl.textContent = 'Загружаю модель...';
+    try {
+        try {
+            session = await ort.InferenceSession.create(MODEL_PATH, { executionProviders: ['webgl'] });
+        } catch(_) {
+            console.warn('WebGL недоступен, переключаюсь на WASM');
+            session = await ort.InferenceSession.create(MODEL_PATH, { executionProviders: ['wasm'] });
+        }
+        // Warm-up: первый запуск с WebGL медленный из-за компиляции шейдеров
+        statusEl.textContent = 'Прогрев модели...';
+        const dummy = new ort.Tensor('float32', new Float32Array(MODEL_SIZE*MODEL_SIZE*3), [1,3,MODEL_SIZE,MODEL_SIZE]);
+        await session.run({ images: dummy });
+
+        state = 'READY';
+        statusEl.textContent = 'Модель готова';
+        btnCamera.disabled = false;
+        btnCamera.textContent = 'Включить камеру';
+    } catch(e) {
+        statusEl.textContent = 'Ошибка загрузки модели: ' + e.message;
+        console.error(e);
+    }
+}
+
+/* ==================================================================
+   КАМЕРА
+   ================================================================== */
+async function openCamera() {
+    statusEl.textContent = 'Запрашиваю камеру...';
+    try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+            video: { width:{ideal:640}, height:{ideal:480}, facingMode:'user' }, audio: false
+        });
+        video.srcObject = stream;
+        video.addEventListener('loadedmetadata', () => {
+            canvas.width  = video.videoWidth;
+            canvas.height = video.videoHeight;
+            placeholder.classList.add('hidden');
+            recDot.classList.remove('hidden'); recDot.classList.add('flex');
+            btnCamera.classList.add('hidden');
+            btnPlay.classList.remove('hidden');
+            state = 'CAMERA';
+            statusEl.textContent = 'Покажи жест и нажми «Начать игру»';
+            startRender();
+            startPrev();
+        });
+    } catch(e) { statusEl.textContent = 'Ошибка камеры: ' + e.message; }
+}
+
+/* ==================================================================
+   ИГРОВАЯ ЛОГИКА
+   ================================================================== */
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+// ---------- отсчёт 3-2-1 ----------
+async function doCountdown() {
+    state = 'COUNTDOWN';
+    stopPrev();
+    bestDet = null; detDirty = true;
+    liveTag.classList.add('hidden'); liveTag.classList.remove('flex');
+
+    countOverlay.classList.remove('hidden');
+    for (let i = 3; i >= 1; i--) {
+        countNum.textContent = i;
+        countNum.className = 'absolute left-1/2 top-1/2 text-[7rem] font-black text-white drop-shadow-[0_0_40px_rgba(201,209,74,0.55)] count-pop';
+        beep(523, 140);
+        await sleep(900);
+    }
+    countNum.textContent = 'СТАРТ';
+    countNum.className = 'absolute left-1/2 top-1/2 text-[4.5rem] font-black text-accent drop-shadow-[0_0_40px_rgba(201,209,74,0.7)] count-pop';
+    beep(1047, 280, 'sine', 0.18);
+    await sleep(550);
+    countOverlay.classList.add('hidden');
+}
+
+// ---------- захват 5 кадров ----------
+async function capture() {
+    state = 'CAPTURING';
+    statusEl.textContent = 'Анализирую жест...';
+
+    const votes = {}, confS = {};
+    for (let i = 0; i < CAP_FRAMES; i++) {
+        const d = await infer();
+        if (d) {
+            const c = d.cid;
+            votes[c] = (votes[c]||0) + 1;
+            confS[c] = (confS[c]||0) + d.conf;
+            bestDet = d; detDirty = true;
+        }
+        if (i < CAP_FRAMES - 1) await sleep(CAP_INTERVAL);
+    }
+
+    // Majority vote, при равенстве — по сумме confidence
+    let bestCls = null, maxV = 0;
+    for (const c in votes) {
+        if (votes[c] > maxV || (votes[c] === maxV && (confS[c]||0) > (confS[bestCls]||0))) {
+            maxV = votes[c]; bestCls = c;
+        }
+    }
+    return bestCls !== null ? parseInt(bestCls) : null;
+}
+
+// ---------- определение победителя ----------
+function winner(p, c) {
+    if (p === c) return 'draw';
+    // Камень(1)>Ножницы(2), Ножницы(2)>Бумага(0), Бумага(0)>Камень(1)
+    if ((p===1&&c===2)||(p===2&&c===0)||(p===0&&c===1)) return 'win';
+    return 'lose';
+}
+
+// ---------- показать результат ----------
+function showResult(pCls, cCls, out) {
+    state = 'RESULT';
+    btnPlay.classList.add('hidden');
+    btnRestart.classList.remove('hidden');
+    bestDet = null; detDirty = true;
+    liveTag.classList.add('hidden');
+
+    resultBox.classList.remove('hidden');
+    pEmoji.textContent = CLS_EMOJI[pCls];
+    pLabel.textContent = CLS_NAME[pCls];
+    pLabel.style.color = CLS_COLOR[pCls];
+    cEmoji.textContent = CLS_EMOJI[cCls];
+    cLabel.textContent = CLS_NAME[cCls];
+    cLabel.style.color = CLS_COLOR[cCls];
+
+    // Анимация карточек
+    pCard.style.opacity = '0'; cCard.style.opacity = '0'; verdict.style.opacity = '0';
+    setTimeout(() => { pCard.className = 'flex flex-col items-center gap-1.5 card-in'; }, 80);
+    setTimeout(() => { cCard.className = 'flex flex-col items-center gap-1.5 card-in'; }, 280);
+
+    const msg  = { win:'Победа!', lose:'Проигрыш', draw:'Ничья' };
+    const clr  = { win:'text-accent', lose:'text-danger', draw:'text-info' };
+    const glow = { win:'glow-win', lose:'glow-lose', draw:'glow-draw' };
+
+    setTimeout(() => {
+        verdict.textContent = msg[out];
+        verdict.className = `text-center mt-5 text-2xl font-bold ${clr[out]} ${glow[out]} card-in`;
+        // Звук
+        if (out==='win')       { beep(659,130); setTimeout(()=>beep(784,130),130); setTimeout(()=>beep(1047,260),260); }
+        else if (out==='lose') { beep(330,180,'sawtooth',0.08); setTimeout(()=>beep(262,350,'sawtooth',0.08),180); }
+        else                   { beep(440,180,'triangle',0.08); setTimeout(()=>beep(440,180,'triangle',0.08),230); }
+    }, 550);
+    statusEl.textContent = '';
+}
+
+// ---------- полный цикл ----------
+async function playGame() {
+    btnPlay.classList.add('hidden');
+    resultBox.classList.add('hidden');
+    pCard.className = 'flex flex-col items-center gap-1.5 opacity-0';
+    cCard.className = 'flex flex-col items-center gap-1.5 opacity-0';
+
+    await doCountdown();
+    const pCls = await capture();
+
+    if (pCls === null) {
+        statusEl.textContent = 'Жест не распознан — покажи чётче и попробуй снова';
+        btnRestart.classList.remove('hidden');
+        state = 'RESULT';
+        return;
+    }
+    const cCls = Math.floor(Math.random() * 3);
+    showResult(pCls, cCls, winner(pCls, cCls));
+}
+
+// ---------- заново ----------
+function restart() {
+    resultBox.classList.add('hidden');
+    btnRestart.classList.add('hidden');
+    pCard.className = 'flex flex-col items-center gap-1.5 opacity-0';
+    cCard.className = 'flex flex-col items-center gap-1.5 opacity-0';
+    state = 'CAMERA';
+    btnPlay.classList.remove('hidden');
+    statusEl.textContent = 'Покажи жест и нажми «Начать игру»';
+    startPrev();
+}
+
+/* ==================================================================
+   ОБРАБОТЧИКИ
+   ================================================================== */
+btnCamera.addEventListener('click', openCamera);
+btnPlay.addEventListener('click', playGame);
+btnRestart.addEventListener('click', restart);
+
+/* ==================================================================
+   СТАРТ
+   ================================================================== */
+loadModel();
+</script>
+</body>
+</html>
