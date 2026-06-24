@@ -65,5 +65,5 @@
 
 ---
 
-**Автор:** [@sakin153](https://github.com/sakin153)  
+**Автор:** tg:@sakin153
 **Проект:** [github.com/sakin153/RPS_web](https://github.com/sakin153/RPS_web)
